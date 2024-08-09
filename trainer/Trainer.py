@@ -18,7 +18,6 @@ class SimpleTrainer(Module):
     def __init__(
         self, 
         net: Module, 
-        diffusion: Module,
         artifact_dir: str,
         ema_config: SimpleNamespace,
         optim_config: SimpleNamespace,
@@ -32,7 +31,6 @@ class SimpleTrainer(Module):
         super().__init__()
         self.device = torch.device('cuda')
         self.net: Module = net.to(self.device)
-        self.diffusion: Module = diffusion
         self.artifact_dir = artifact_dir
         self.save_checkpoint_every = save_checkpoint_every
         self.start_step = 0
@@ -97,27 +95,27 @@ class SimpleTrainer(Module):
             data = next(self.loader_iters[loader])
         return data
 
-    def fit(self, num_steps=1000):
+    def fit(self, diffusion, num_steps=1000):
         # Decouple training steps from length of dataset
         last_step_i = num_steps - 1
         print(f'Training from step {self.step.item()} to step {num_steps}...')
         for step in tqdm(range(self.step, num_steps + 1)):
             if step <= last_step_i:
-                train_loss = self._forward_backward()
-            self._update_train_artifacts(train_loss)
+                train_loss = self._forward_backward(diffusion)
+            self._update_train_artifacts(train_loss, diffusion)
             self.step += 1
         print('Done.')
 
-    def _update_train_artifacts(self, train_loss):
+    def _update_train_artifacts(self, train_loss, diffusion):
         self.writer.add_scalar('Loss/train', train_loss, self.step)
         if self.step % self.val_loss_every == 0:
-            self.writer.add_scalar('Loss/val', self._get_val_batch_loss(), self.step)
+            self.writer.add_scalar('Loss/val', self._get_val_batch_loss(diffusion=diffusion), self.step)
 
         if self.step > self.start_step and self.step % self.save_checkpoint_every == 0:
             self.save_checkpoint()
 
         if self.step > self.start_step and self.step % self.draw_val_sample_every == 0:
-            self._save_val_sample()
+            self._save_val_sample(diffusion)
 
     def _checkpoint_paths_from_step(self, step):
         dir = self._checkpoint_dir_from_step(step)
@@ -145,26 +143,26 @@ class SimpleTrainer(Module):
         torch.save({'trainer_state_dict': self.state_dict()}, file_path)
         print('Done.')
 
-    def _draw_val_sample(self):
+    def _draw_val_sample(self, diffusion):
         data = self._next_batch('val')
-        if isinstance(self.diffusion, Diffusion.ConditionalDiffusion):
-            sample_sequence = self._conditional_diffusion_sample(data)
+        if isinstance(diffusion, Diffusion.ConditionalDiffusion):
+            sample_sequence = self._conditional_diffusion_sample(data, diffusion)
         else:
             raise NotImplementedError
         return sample_sequence
 
-    def _conditional_diffusion_sample(self, data):
+    def _conditional_diffusion_sample(self, data, diffusion):
         a, b = data
         a, b = a.to(self.device), b.to(self.device)
-        sample_sequence = self.diffusion.sample(self.net, a)
+        sample_sequence = diffusion.sample(self.net, a)
         return sample_sequence
 
-    def _save_val_sample(self, save_intermediates=True):
+    def _save_val_sample(self, diffusion, save_intermediates=True):
         out_dir = self._sample_dir_from_step(self.step.item())
         print(f'Creating directory {out_dir} to save samples...')
         out_dir.mkdir()
         print('Creating sample with network...')
-        sample_sequence = self._draw_val_sample()
+        sample_sequence = self._draw_val_sample(diffusion)
         print('Saving samples...')
         for i, batch_of_outputs in enumerate(sample_sequence):
             batch_of_outputs = UtilFunctions.format_bchw_network_output_to_images(batch_of_outputs)
@@ -174,28 +172,28 @@ class SimpleTrainer(Module):
         print('Done.')
 
     @torch.no_grad()
-    def _get_val_batch_loss(self):
+    def _get_val_batch_loss(self, diffusion):
         # data = next(iter(self.val_loader))
-        return self._get_loss(self._next_batch('val')).detach().cpu().numpy()
+        return self._get_loss(data=self._next_batch('val'), diffusion=diffusion).detach().cpu().numpy()
 
-    def _get_loss(self, data):
+    def _get_loss(self, data, diffusion):
         # Account for different diffusion loss interfaces
-        if isinstance(self.diffusion, Diffusion.ConditionalDiffusion):
-            loss = self._conditional_diffusion_loss(data)
+        if isinstance(diffusion, Diffusion.ConditionalDiffusion):
+            loss = self._conditional_diffusion_loss(data, diffusion)
         else:
             raise NotImplementedError
         return loss
 
-    def _conditional_diffusion_loss(self, data):
+    def _conditional_diffusion_loss(self, data, diffusion):
         a, b = data
         a, b = a.to(self.device), b.to(self.device)
-        return self.diffusion.loss(self.net, a, b)
+        return diffusion.loss(self.net, a, b)
 
-    def _forward_backward(self):
+    def _forward_backward(self, diffusion):
         self.optimizer.zero_grad()
         self.net.train()
         data = self._next_batch('train')
-        loss = self._get_loss(data)
+        loss = self._get_loss(data, diffusion)
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.optimizer)
         torch.nn.utils.clip_grad_value_(self.net.parameters(), 1.0)

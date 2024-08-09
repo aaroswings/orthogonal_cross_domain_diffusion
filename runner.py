@@ -31,14 +31,16 @@ if __name__ == '__main__':
     diffusion = Diffusion.ConditionalDiffusion(
         sampling_num_timesteps=config.diffusion.sampling_num_timesteps,
         sampling_num_latents_to_return=config.diffusion.sampling_num_latents_to_return,
-        sampling_clip_latent=config.diffusion.sampling_clip_latent
+        sampling_clip_latent=config.diffusion.sampling_clip_latent,
+        normalize_x0_A=config.diffusion.normalize_x0_A,
+        center_x0_A=config.diffusion.center_x0_A,
+        continuous_partial_sample_normalization_x=config.diffusion.continuous_partial_sample_normalization_x
     )
 
     if args.program == 'train':
         # Todo code to load trainer state from checkpoint here
         trainer = Trainer.SimpleTrainer(
             net=net,
-            diffusion=diffusion,
             artifact_dir=f'out/{args.profile}',
             ema_config=config.trainer.ema,
             optim_config=config.trainer.optim,
@@ -50,7 +52,5 @@ if __name__ == '__main__':
         )
         if config.load_checkpoint_step > 0:
             trainer.load_checkpoint(config.load_checkpoint_step)
-
-        #print(trainer.state_dict())
-        print("Fitting model using config file")
-        trainer.fit(num_steps=config.final_train_step)
+        print("Fitting model...")
+        trainer.fit(num_steps=config.final_train_step, diffusion=diffusion)

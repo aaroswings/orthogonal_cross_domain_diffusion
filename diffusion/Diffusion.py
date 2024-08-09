@@ -15,14 +15,24 @@ class ConditionalDiffusion(Module):
         sampling_num_latents_to_return: int = 1,
         sampling_clip_latent: str = None,
         normalize_x0_A: bool = False,
-        continuous_partial_sample_normalization_x: str = 'none'
+        center_x0_A: bool = False,
+        continuous_partial_sample_normalization_x: str = 'none',
+        sampling_use_cosine_noise_schedule: bool = False,
+        sampling_noise_churn_schedule: str = 'none',
+        sampling_noisy_correction_out_of_bounds: bool = False,
+        sampling_scale_x_by_minmax: bool = False
     ):
         super().__init__()
         self.sampling_num_timesteps = sampling_num_timesteps
         self.sampling_num_latents_to_return = sampling_num_latents_to_return
         self.sampling_clip_latent = sampling_clip_latent
         self.normalize_x0_A = normalize_x0_A
+        self.center_x0_A = center_x0_A
         self.continuous_partial_sample_normalization = continuous_partial_sample_normalization_x
+        self.sampling_use_cosine_noise_schedule = sampling_use_cosine_noise_schedule
+        self.sampling_noise_churn_schedule = sampling_noise_churn_schedule
+        self.sampling_noisy_correction_out_of_bounds = sampling_noisy_correction_out_of_bounds
+        self.sampling_scale_x_by_minmax = sampling_scale_x_by_minmax
 
     def loss(self, net, x0_A, x0_B):
         """
@@ -36,8 +46,11 @@ class ConditionalDiffusion(Module):
         with torch.no_grad():
             if self.normalize_x0_A:
                 x0_A = x0_A / x0_A.std(dim=(1, 2, 3), keepdim=True)
+            if self.center_x0_A:
+                x0_A = x0_A - x0_A.mean(dim=(1, 2, 3), keepdim=True)
             eps = torch.randn_like(x0_B)
             t = torch.rand_like(x0_B[:, 0, 0, 0]) # (B, 1, 1, 1) tensor of values on the interval [0,1]
+            t = t.clamp(1e-2, 1.-1e-2)
             alpha, sigma = t_to_alpha_sigma(t)
 
             if self.continuous_partial_sample_normalization == 'x0_B':
@@ -64,17 +77,33 @@ class ConditionalDiffusion(Module):
 
         if self.normalize_x0_A:
                 x0_A = x0_A / x0_A.std(dim=(1, 2, 3), keepdim=True)
-                
+        if self.center_x0_A:
+            x0_A = x0_A - x0_A.mean(dim=(1, 2, 3), keepdim=True)
+        
         eps = torch.randn_like(x0_A)
         x0_B_pred = torch.randn_like(x0_A)
-        timesteps = torch.linspace(1, 0, self.sampling_num_timesteps).to(x0_A)
+
+        timesteps = torch.linspace(1, 0, self.sampling_num_timesteps + 1)[:-1].to(x0_A)
+
+        # reversing time
         ret = []
 
         for step, t in tqdm(enumerate(timesteps)):
+            if self.sampling_use_cosine_noise_schedule:
+                # "(1-t)" would be replaced with "t" if we hadn't flipped the order of the steps for convenience,
+                # meaning if we used timesteps = torch.linspace(0, 1...) instead of timesteps = torch.linspace(1, 0...)
+                t = 1 - torch.cos((1 - t) * math.pi / 2)
+
             # Establish latent diffusion variable states for timestep t
             alpha, sigma = t_to_alpha_sigma(t)
             if self.continuous_partial_sample_normalization == 'x0_B':
                 x0_B_pred = x0_B_pred / (x0_B_pred.std(dim=(1, 2, 3), keepdim=True) * sigma + (1. - sigma))
+
+            if self.sampling_noise_churn_schedule == 'cosine':
+                # Replace eps according to a schedule
+                rho = 1 - torch.cos((1 - t) * math.pi / 2)
+                eps = torch.randn_like(eps) * rho.sqrt() + eps * (1. - rho.sqrt())
+
             z = alpha * x0_B_pred + sigma * eps
             z_cond = torch.concat([x0_A, z], dim=1)
 
@@ -93,6 +122,17 @@ class ConditionalDiffusion(Module):
 
             if self.sampling_clip_latent == 'absolute':
                 x0_B_pred = torch.clip(x0_B_pred, -1., 1.)
+            elif self.sampling_clip_latent == 'log_clip_x_static':
+                x0_B_pred = log_clip_x(x0_B_pred, multiplier=1.0)
+            elif self.sampling_clip_latent == 'log_clip_x_scheduled':
+                x0_B_pred = log_clip_x(x0_B_pred, multiplier=sigma)
+
+            if self.sampling_scale_x_by_minmax:
+                x0_B_pred = scale_by_minmax(x0_B_pred)
+
+            if self.sampling_noisy_correction_out_of_bounds:
+                noisy_correction_out_of_bounds_lower_(x0_B_pred)
+                noisy_correction_out_of_bounds_upper_(x0_B_pred)
         ret.append(x0_B_pred)
         return ret
             
