@@ -36,6 +36,7 @@ class ConditionalDiffusion(Module):
         noise_schedule: str = 'linear',
         noise_replacement_schedule: str = 'none',
         noise_replacement_eta: float = 0.3,
+        normalize_eps: bool = True
     ):
         super().__init__()
         self.sampling_num_timesteps = sampling_num_timesteps
@@ -43,6 +44,7 @@ class ConditionalDiffusion(Module):
         self.noise_schedule = noise_schedule
         self.noise_replacement_schedule = noise_replacement_schedule
         self.noise_replacement_eta = noise_replacement_eta
+        self.normalize_eps = normalize_eps
 
     def loss(self, net, x0_A, x0_B):
         """
@@ -154,6 +156,7 @@ class CrossDiffusion(Module):
         sampling_method: str = 'none',
         noise_replacement_schedule: str = 'none',
         noise_replacement_eta: float = 0.0,
+        normalize_eps: bool = True
     ):
         super().__init__()
         self.sampling_num_timesteps = sampling_num_timesteps
@@ -164,6 +167,7 @@ class CrossDiffusion(Module):
         if self.noise_replacement_schedule != 'none':
             raise NotImplementedError
         self.noise_replacement_eta = noise_replacement_eta
+        self.normalize_eps = normalize_eps
 
     def _basis_to_local(self, x0_A, x0_B, eps, theta, phi):
         r = torch.sin(theta) * torch.cos(phi) * x0_A + \
@@ -373,7 +377,10 @@ class CrossDiffusion(Module):
                 v_eps_2_pred, v_ab_2_pred = net(rs, angles).tensor_split(2, dim=1)
 
             x0_A, x0_B, eps = self._local_to_basis(r_2, v_eps_2_pred, v_ab_2_pred, theta2, phi2)
-
+            
+            if self.normalize_eps:
+                eps / eps.std(dim=(1, 2, 3), keepdim=True)
+                
             # Replace some noise?
             if i < self.sampling_num_timesteps - 1 and etas[i]:
                 eps = eps * (1 - etas[i]).sqrt() + torch.randn_like(eps) * etas[i].sqrt()

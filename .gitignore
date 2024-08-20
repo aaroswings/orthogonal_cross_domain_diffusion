@@ -136,4 +136,5 @@ dmypy.json
 dataset/
 out/
 debug/
+profiles/*
 
