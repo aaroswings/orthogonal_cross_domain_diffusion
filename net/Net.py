@@ -21,6 +21,7 @@ class UNet(Module):
         self.t_dim_in = t_dim_in
         self.resolutions = len(dims)
         self.register_buffer('root2', torch.sqrt(torch.tensor(2)))
+        print('Constructing and initializing U-Net modules...')
         self.time_mlp = Sequential(
             FourierFeatures(dims[0], std=1., num_features=t_dim_in, scale=fourier_features_scale),
             Linear(dims[0], emb_dim),
@@ -53,38 +54,40 @@ class UNet(Module):
             ModuleList([Upsample(dims[-i - 1], dims[-i - 2])] + make_blocks(-i - 2))
             for i in range(self.resolutions - 1)
         ])
-
+        
         self.print_param_count()
 
     def print_param_count(self):
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
         n_params = sum([p.numel() for p in model_parameters])
-        print(f'Num params in network: {n_params}\n({int(n_params / 1000000)}M params)', )
+        print(f'{int(n_params / 1000000)}M params in network.', )
 
     def get_device(self):
         return next(self.parameters()).device
     
-    def forward(self, x, t, c: Optional[torch.tensor] = None):
+    def _format_t(self, x, t):
+        # If t is not a (B,k) tensor, ensure it becomes one
+        if t.dim() == 0:
+            assert self.t_dim_in == 1
+            t = t.view(1)
+        elif t.dim() == 1:
+            t = t[:, None]
+            assert self.t_dim_in == 1
+        elif t.dim() == 4:
+            assert t.size(1) == self.t_dim_in
+            assert t.size(2) == 1 and t.size(3) == 1
+            t = t.view(-1, t.size(1))
+        else:
+            raise ValueError("t expected to be a single float, a 1d tensor or a 4d tensor of shape (B, t_dim_in, 1, 1)")
+        return t
+    
+    def forward(self, x, t):
         """
         x: (B,C,H,W) tensor
         t: (B,k) tensor
         """
-        # If t is not a (B,k) tensor, ensure it becomes one
-        if t.dim() == 0:
-            assert self.t_dim_in == 1
-            t = torch.ones(x.size(0), 1).to(self.get_device()) * t
-        elif t.dim() == 1:
-            t = t[:, None]
-            assert self.t_dim_in == 1
-        elif t.dim() == 2:
-            assert t.size(1) == self.t_dim_in
-        elif t.dim() == 4:
-            assert t.size(2) == 1 and t.size(3) == 1
-            t = t.view(-1, t.size(1))
-            assert t.size(1) == self.t_dim_in
-        else:
-            raise ValueError("t expected to be a single float, a 1d tensor or a 4d tensor of shape (B, t_dim_in, 1, 1)")
         
+        t = self._format_t(x, t)
         temb = self.time_mlp(t)
         hs = []
 

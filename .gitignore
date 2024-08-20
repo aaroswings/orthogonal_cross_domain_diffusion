@@ -132,7 +132,8 @@ dmypy.json
 .vscode/
 *.ckpt
 
-# Custom
+# Training and coding artifacts
 dataset/
 out/
+debug/
 

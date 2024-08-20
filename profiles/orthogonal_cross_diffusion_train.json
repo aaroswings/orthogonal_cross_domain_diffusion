@@ -1,9 +1,11 @@
 {
     "final_train_step": 350000,
     "load_checkpoint_step": 0,
+    "load_from_checkpoint_path": null,
+    "artifact_dir": "out/orthogonal_cross_diffusion_train",
     "net": {
         "in_channels": 6,
-        "out_channels": 3,
+        "out_channels": 6,
         "emb_dim": 256,
         "dims": [
             128,
@@ -38,21 +40,20 @@
             true
         ],
         "attn_heads": 8,
-        "in_conv_kernel_size": 3
-    },
+        "in_conv_kernel_size": 3,
+        "t_dim_in": 4
+    }, 
     "diffusion": {
-        "sampling_num_timesteps": 1000,
+        "sampling_num_timesteps": 200,
         "sampling_num_latents_to_return": 10,
-        "sampling_clip_latent": "absolute",
-        "normalize_x0_A": true,
-        "center_x0_A": true,
-        "continuous_partial_sample_normalization_x": "x0_B"
+        "noise_schedule": "linear",
+        "noise_replacement_schedule": "none",
+        "noise_replacement_eta": 0.0
     },
     "trainer": {
         "seed": 0,
         "save_checkpoint_every": 5000,
         "draw_val_sample_every": 5000,
-        "artifact_dir": "./out/method_1_legacy_cpsn_x0_B_no_xclip",
         "ema": {
             "beta": 0.999,
             "update_after_step": 5000,
@@ -73,11 +74,17 @@
         "dataset": {
             "train_file_dirs": [
                 "./dataset/anime_sketch_color/train/sketch_256",
-                "./dataset/anime_sketch_color/train/color_256"
+                "./dataset/anime_sketch_color/train/color_256",
+                "./dataset/anime_sketch_color/train/unpaired_lines_256",
+                "./dataset/anime_sketch_color/train/unpaired_color_256"
             ],
+            "contrast_augment_std": 0.05,
+            "brightness_augment_std": 0.05,
             "val_file_dirs": [
                 "./dataset/anime_sketch_color/val/sketch_256",
-                "./dataset/anime_sketch_color/val/color_256"
+                "./dataset/anime_sketch_color/val/color_256",
+                null,
+                null
             ],
             "size": 256
         },

@@ -4,9 +4,8 @@ import os
 import math
 import numpy as np
 from PIL import Image
-from typing import List, Optional
-from sortedcollections import OrderedSet
 import torchvision.transforms.functional as TF
+from typing import List
 
 IMG_EXTENSIONS = [
     '.jpg', '.JPG', '.jpeg', '.JPEG',
@@ -66,7 +65,6 @@ def crop_by_ratio(img, max_aspect_ratio=1.25):
             yield cropped.transpose(method=Image.ROTATE_270)
         else:
             yield cropped
-
 
 def is_image_file(filename: str) -> bool:
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
